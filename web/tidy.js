@@ -1547,6 +1547,44 @@ function classifyNode(node) {
 }
 
 // =====================================================================
+// Frontend version shims
+//
+// Nodes 2.0 renders nodes as DOM elements and keeps geometry in a shared
+// layout store. The `nodes` / `groups` getters and `setPos()` are the public
+// APIs that work on both renderers; the underscore arrays are the older
+// LiteGraph fallback.
+// =====================================================================
+
+// A canvas menu action should tidy the graph the user is looking at. In
+// older frontends this is the same object as app.graph; with subgraphs it
+// can be a nested graph while app.graph stays at the root.
+function activeGraph() {
+    return app.canvas?.graph || app.graph;
+}
+
+function graphNodes(graph) {
+    return (graph && (graph.nodes || graph._nodes)) || [];
+}
+
+function graphGroups(graph) {
+    return (graph && (graph.groups || graph._groups)) || [];
+}
+
+function isVueNodesMode() {
+    try {
+        if (typeof LiteGraph !== "undefined" && LiteGraph.vueNodesMode === true) return true;
+        const em = app.extensionManager;
+        if (em?.setting?.get) return em.setting.get("Comfy.VueNodes.Enabled") === true;
+        if (app.ui?.settings?.getSettingValue) {
+            return app.ui.settings.getSettingValue("Comfy.VueNodes.Enabled") === true;
+        }
+    } catch (_) {
+        // Frontend predates the setting — classic canvas.
+    }
+    return false;
+}
+
+// =====================================================================
 // Layout
 // =====================================================================
 
@@ -1571,7 +1609,7 @@ const GROUP_TITLE_BAR = GROUP_FONT_SIZE * 2 + 4;
 function topoOrderMap(graph) {
     // Use LiteGraph's executionOrder so nodes within a column arrange in
     // the order data flows through them.
-    const order = graph.computeExecutionOrder ? graph.computeExecutionOrder(false, true) : graph._nodes.slice();
+    const order = graph.computeExecutionOrder ? graph.computeExecutionOrder(false, true) : graphNodes(graph).slice();
     const map = new Map();
     order.forEach((n, i) => map.set(n.id, i));
     return map;
@@ -1605,8 +1643,8 @@ function bucketize(nodes) {
 // pass catches them. Bails after a safety ceiling so a buggy node can't
 // infinite-loop.
 function unpackAllGroups() {
-    const graph = app.graph;
-    if (!graph || !graph._nodes) return 0;
+    const graph = activeGraph();
+    if (!graph || !graphNodes(graph).length) return 0;
 
     // Duck-type check for modern SubgraphNode — these expose a `.subgraph`
     // (the inner LGraph) and a `getInnerNodes()` method, neither of which
@@ -1615,7 +1653,7 @@ function unpackAllGroups() {
 
     let totalUnpacked = 0;
     for (let pass = 0; pass < 16; pass++) {
-        const nodes = graph._nodes.slice(); // snapshot — unpacking mutates
+        const nodes = graphNodes(graph).slice(); // snapshot — unpacking mutates
         let unpackedThisPass = 0;
         for (const node of nodes) {
             // Try modern subgraph first.
@@ -1647,10 +1685,10 @@ function unpackAllGroups() {
 }
 
 function deleteAllGroups() {
-    const graph = app.graph;
-    if (!graph || !graph._groups) return 0;
-    // Snapshot the array — graph.remove() mutates _groups while we iterate.
-    const groups = graph._groups.slice();
+    const graph = activeGraph();
+    if (!graph || !graphGroups(graph).length) return 0;
+    // Snapshot the array — graph.remove() mutates the group list while we iterate.
+    const groups = graphGroups(graph).slice();
     let removed = 0;
     for (const g of groups) {
         try { graph.remove(g); removed++; } catch (e) { /* noop */ }
@@ -1658,8 +1696,8 @@ function deleteAllGroups() {
     return removed;
 }
 
-function createRoleGroups(buckets, usedRoles) {
-    const graph = app.graph;
+function createRoleGroups(buckets, usedRoles, vueMode) {
+    const graph = activeGraph();
     if (!graph || typeof LiteGraph === "undefined" || !LiteGraph.LGraphGroup) return;
 
     const PAD = GROUP_PAD;
@@ -1671,10 +1709,13 @@ function createRoleGroups(buckets, usedRoles) {
 
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const n of nodes) {
-            const x = n.pos[0];
-            const y = n.pos[1];
-            const w = nodeWidth(n);
-            const h = nodeHeight(n);
+            // nodeBox() uses the rendered size in Nodes 2.0 and pos/size in
+            // classic, both in the same body frame the group math expects.
+            const box = nodeBox(n, vueMode);
+            const x = box.x;
+            const y = box.y;
+            const w = box.w;
+            const h = box.h;
             if (x < minX) minX = x;
             if (y < minY) minY = y;
             if (x + w > maxX) maxX = x + w;
@@ -1700,8 +1741,8 @@ function createRoleGroups(buckets, usedRoles) {
 
 function tidyByRole(orientation = "horizontal", opts = {}) {
     const { groups: addGroups = false, unpack: unpackGroups = false } = opts;
-    const graph = app.graph;
-    if (!graph || !graph._nodes || !graph._nodes.length) return;
+    const graph = activeGraph();
+    if (!graph || !graphNodes(graph).length) return;
 
     // Optionally flatten every group node (and any nested ones) into the
     // main graph BEFORE classifying — so what's tidied is a clean flat list
@@ -1716,7 +1757,7 @@ function tidyByRole(orientation = "horizontal", opts = {}) {
     // layout starts roughly where the workflow already lives — keeps the
     // user oriented instead of teleporting everything to (0, 0).
     let originX = Infinity, originY = Infinity;
-    for (const n of graph._nodes) {
+    for (const n of graphNodes(graph)) {
         if (n.pos) {
             originX = Math.min(originX, n.pos[0]);
             originY = Math.min(originY, n.pos[1]);
@@ -1726,7 +1767,8 @@ function tidyByRole(orientation = "horizontal", opts = {}) {
     if (!isFinite(originY)) originY = 0;
 
     const topoIdx = topoOrderMap(graph);
-    const buckets = bucketize(graph._nodes);
+    const buckets = bucketize(graphNodes(graph));
+    const vueMode = isVueNodesMode();
 
     // Drop empty buckets so we don't reserve a gap for a column with nothing in it.
     const usedRoles = ROLES.filter((r) => buckets[r].length > 0);
@@ -1743,20 +1785,64 @@ function tidyByRole(orientation = "horizontal", opts = {}) {
     }
 
     if (orientation === "vertical") {
-        layoutVertical(buckets, usedRoles, originX, originY, addGroups);
+        layoutVertical(buckets, usedRoles, originX, originY, addGroups, vueMode);
     } else {
-        layoutHorizontal(buckets, usedRoles, originX, originY, addGroups);
+        layoutHorizontal(buckets, usedRoles, originX, originY, addGroups, vueMode);
     }
 
-    if (addGroups) createRoleGroups(buckets, usedRoles);
+    if (addGroups) createRoleGroups(buckets, usedRoles, vueMode);
 
-    app.graph.setDirtyCanvas(true, true);
+    graph.setDirtyCanvas(true, true);
 }
 
 function nodeWidth(n)  { return (n.size && n.size[0]) || 200; }
 function nodeHeight(n) { return (n.size && n.size[1]) || 100; }
 
-function layoutHorizontal(buckets, usedRoles, originX, originY, withGroups) {
+// Node footprint in the classic body frame: x/y come from node.pos and
+// w/h exclude the title bar. In Nodes 2.0 `size` is only the requested size
+// and the DOM can lay out larger, so take w/h from getBounding() (the actual
+// rendered box) but subtract the title bar that LiteGraph adds above pos.
+// Keeping this frame is what makes group cards land in the same place in
+// both renderers — group.pos is still computed as pos - PAD - TITLE_BAR.
+function nodeBox(n, vueMode) {
+    let w = nodeWidth(n);
+    let h = nodeHeight(n);
+    if (vueMode && typeof n.getBounding === "function") {
+        try {
+            const b = n.getBounding();
+            if (b && b.length >= 4 && b.every(Number.isFinite) && b[2] > 0 && b[3] > 0) {
+                const lg = typeof LiteGraph !== "undefined" ? LiteGraph : null;
+                const mode = n.title_mode;
+                const titleH = lg && mode !== lg.NO_TITLE && mode !== lg.TRANSPARENT_TITLE
+                    ? (lg.NODE_TITLE_HEIGHT || 0)
+                    : 0;
+                w = b[2];
+                h = Math.max(1, b[3] - titleH);
+            }
+        } catch (_) {
+            // Fall through to the requested size.
+        }
+    }
+    return {
+        x: (n.pos && n.pos[0]) || 0,
+        y: (n.pos && n.pos[1]) || 0,
+        w: w,
+        h: h,
+    };
+}
+
+// setPos() writes through to the shared layout store in Nodes 2.0 and is
+// also present on classic LiteGraph nodes. Direct pos assignment remains
+// the fallback for older frontends.
+function setNodePos(n, x, y, vueMode) {
+    if (typeof n.setPos === "function") n.setPos(x, y);
+    else n.pos = [x, y];
+    // Vue renderer caches rendered bounds per frame. Refresh them so the
+    // group cards created below measure the post-layout positions.
+    if (vueMode && typeof n.updateArea === "function") n.updateArea();
+}
+
+function layoutHorizontal(buckets, usedRoles, originX, originY, withGroups, vueMode) {
     // Each role is a column. Width = max node width in column. Nodes stack
     // vertically within the column, top-aligned at originY.
     //
@@ -1768,26 +1854,30 @@ function layoutHorizontal(buckets, usedRoles, originX, originY, withGroups) {
     const interColGap = withGroups
         ? Math.max(COL_GAP, GROUP_PAD * 2 + 16)
         : COL_GAP;
+    // nodeBox() has already normalised away the title bar, so the same
+    // TITLE_PAD is correct in both renderers.
+    const stepPad = TITLE_PAD;
 
     let x = originX + ORIGIN_PAD;
     const yBase = originY + ORIGIN_PAD;
     for (const role of usedRoles) {
         const col = buckets[role];
-        const colWidth = col.reduce((m, n) => Math.max(m, nodeWidth(n)), 0);
+        const colWidth = col.reduce((m, n) => Math.max(m, nodeBox(n, vueMode).w), 0);
 
         let y = yBase;
         for (const n of col) {
             // Centre each node horizontally within the column (so wide and
             // narrow nodes in the same column line up visually).
-            const nx = x + Math.round((colWidth - nodeWidth(n)) / 2);
-            n.pos = [nx, y];
-            y += nodeHeight(n) + ROW_GAP + TITLE_PAD;
+            const box = nodeBox(n, vueMode);
+            const nx = x + Math.round((colWidth - box.w) / 2);
+            setNodePos(n, nx, y, vueMode);
+            y += box.h + ROW_GAP + stepPad;
         }
         x += colWidth + interColGap;
     }
 }
 
-function layoutVertical(buckets, usedRoles, originX, originY, withGroups) {
+function layoutVertical(buckets, usedRoles, originX, originY, withGroups, vueMode) {
     // Each role is a row. Height = max node height in row. Nodes stack
     // horizontally within the row, left-aligned at originX.
     //
@@ -1800,21 +1890,23 @@ function layoutVertical(buckets, usedRoles, originX, originY, withGroups) {
     // …plus a few px of breathing room. Without this, the next row's group
     // title bar overlaps the previous row's group bottom — which is the
     // visual bug the user spotted.
+    const stepPad = TITLE_PAD;
     const interRowGap = withGroups
         ? GROUP_PAD * 2 + GROUP_TITLE_BAR + 16
-        : ROW_GAP + TITLE_PAD;
+        : ROW_GAP + stepPad;
 
     const xBase = originX + ORIGIN_PAD;
     let y = originY + ORIGIN_PAD;
     for (const role of usedRoles) {
         const row = buckets[role];
-        const rowHeight = row.reduce((m, n) => Math.max(m, nodeHeight(n)), 0);
+        const rowHeight = row.reduce((m, n) => Math.max(m, nodeBox(n, vueMode).h), 0);
 
         let x = xBase;
         for (const n of row) {
-            const ny = y + Math.round((rowHeight - nodeHeight(n)) / 2);
-            n.pos = [x, ny];
-            x += nodeWidth(n) + COL_GAP;
+            const box = nodeBox(n, vueMode);
+            const ny = y + Math.round((rowHeight - box.h) / 2);
+            setNodePos(n, x, ny, vueMode);
+            x += box.w + COL_GAP;
         }
         y += rowHeight + interRowGap;
     }
@@ -1825,12 +1917,13 @@ function layoutVertical(buckets, usedRoles, originX, originY, withGroups) {
 // =====================================================================
 
 function showClassificationEditor() {
-    const graph = app.graph;
-    if (!graph || !graph._nodes || !graph._nodes.length) {
+    const graph = activeGraph();
+    const nodes = graphNodes(graph);
+    if (!nodes.length) {
         alert("Workflow is empty.");
         return;
     }
-    showEditorModal(graph._nodes);
+    showEditorModal(nodes);
 }
 
 function showEditorModal(nodes) {
@@ -2053,68 +2146,93 @@ function showEditorModal(nodes) {
 
 // =====================================================================
 // Menu integration
+//
+// Newer frontends (including Nodes 2.0) collect canvas menu items through
+// the extension hook `getCanvasMenuItems`. Older ones only expose the
+// LiteGraph prototype, so keep that path as a fallback rather than
+// monkey-patching both and getting every item twice.
 // =====================================================================
 
-app.registerExtension({
+function buildCanvasMenuItems() {
+    return [
+        null, // separator
+        {
+            content: "✨ Tidy by Role (horizontal)",
+            callback: () => tidyByRole("horizontal"),
+        },
+        {
+            content: "✨ Tidy by Role (vertical)",
+            callback: () => tidyByRole("vertical"),
+        },
+        {
+            content: "✨ Tidy by Role + Groups (horizontal)",
+            callback: () => tidyByRole("horizontal", { groups: true }),
+        },
+        {
+            content: "✨ Tidy by Role + Groups (vertical)",
+            callback: () => tidyByRole("vertical", { groups: true }),
+        },
+        {
+            content: "✨ Tidy by Role — Delete all groups",
+            callback: () => {
+                const n = deleteAllGroups();
+                activeGraph().setDirtyCanvas(true, true);
+                if (typeof window !== "undefined") {
+                    // Tiny inline confirmation; alert is sufficient for one-off.
+                    alert(`Deleted ${n} group${n === 1 ? "" : "s"}.`);
+                }
+            },
+        },
+        {
+            content: "✨ Tidy by Role — Unpack subgraphs/groups + Tidy + Groups (horizontal)",
+            callback: () => tidyByRole("horizontal", { groups: true, unpack: true }),
+        },
+        {
+            content: "✨ Tidy by Role — Unpack subgraphs/groups + Tidy + Groups (vertical)",
+            callback: () => tidyByRole("vertical", { groups: true, unpack: true }),
+        },
+        {
+            content: "✨ Tidy by Role — Unpack all subgraphs / group nodes (no tidy)",
+            callback: () => {
+                const n = unpackAllGroups();
+                if (typeof window !== "undefined") {
+                    alert(`Unpacked ${n} subgraph${n === 1 ? "" : "s"} / group node${n === 1 ? "" : "s"}.`);
+                }
+            },
+        },
+        {
+            content: "✨ Tidy by Role — review & edit assignments…",
+            callback: () => showClassificationEditor(),
+        },
+    ];
+}
+
+const HAS_MENU_HOOK = typeof app.collectCanvasMenuItems === "function";
+
+const extension = {
     name: "CleanFreak.TidyByRole",
-    async setup(app) {
+    async setup(extensionApp) {
         // Kick the user-overrides fetch immediately so the first tidy /
         // editor call doesn't have to wait on the network round-trip.
         ensureOverridesLoaded();
 
-        const orig = LGraphCanvas.prototype.getCanvasMenuOptions;
-        LGraphCanvas.prototype.getCanvasMenuOptions = function () {
-            const options = orig.apply(this, arguments);
-            options.push(null); // separator
-            options.push({
-                content: "✨ Tidy by Role (horizontal)",
-                callback: () => tidyByRole("horizontal"),
-            });
-            options.push({
-                content: "✨ Tidy by Role (vertical)",
-                callback: () => tidyByRole("vertical"),
-            });
-            options.push({
-                content: "✨ Tidy by Role + Groups (horizontal)",
-                callback: () => tidyByRole("horizontal", { groups: true }),
-            });
-            options.push({
-                content: "✨ Tidy by Role + Groups (vertical)",
-                callback: () => tidyByRole("vertical", { groups: true }),
-            });
-            options.push({
-                content: "✨ Tidy by Role — Delete all groups",
-                callback: () => {
-                    const n = deleteAllGroups();
-                    app.graph.setDirtyCanvas(true, true);
-                    if (typeof window !== "undefined") {
-                        // Tiny inline confirmation; alert is sufficient for one-off.
-                        alert(`Deleted ${n} group${n === 1 ? "" : "s"}.`);
-                    }
-                },
-            });
-            options.push({
-                content: "✨ Tidy by Role — Unpack subgraphs/groups + Tidy + Groups (horizontal)",
-                callback: () => tidyByRole("horizontal", { groups: true, unpack: true }),
-            });
-            options.push({
-                content: "✨ Tidy by Role — Unpack subgraphs/groups + Tidy + Groups (vertical)",
-                callback: () => tidyByRole("vertical", { groups: true, unpack: true }),
-            });
-            options.push({
-                content: "✨ Tidy by Role — Unpack all subgraphs / group nodes (no tidy)",
-                callback: () => {
-                    const n = unpackAllGroups();
-                    if (typeof window !== "undefined") {
-                        alert(`Unpacked ${n} subgraph${n === 1 ? "" : "s"} / group node${n === 1 ? "" : "s"}.`);
-                    }
-                },
-            });
-            options.push({
-                content: "✨ Tidy by Role — review & edit assignments…",
-                callback: () => showClassificationEditor(),
-            });
-            return options;
+        if (HAS_MENU_HOOK) return;
+
+        // Classic frontend path. Use the canvas instance's constructor as a
+        // fallback when the global isn't exposed yet at setup time.
+        const CanvasClass = globalThis.LGraphCanvas || extensionApp?.canvas?.constructor;
+        if (!CanvasClass?.prototype?.getCanvasMenuOptions) {
+            console.warn("[cleanfreak] no canvas menu API available; menu items were not installed");
+            return;
+        }
+        const orig = CanvasClass.prototype.getCanvasMenuOptions;
+        CanvasClass.prototype.getCanvasMenuOptions = function () {
+            const options = orig.apply(this, arguments) || [];
+            return options.concat(buildCanvasMenuItems());
         };
     },
-});
+};
+
+if (HAS_MENU_HOOK) extension.getCanvasMenuItems = () => buildCanvasMenuItems();
+
+app.registerExtension(extension);
