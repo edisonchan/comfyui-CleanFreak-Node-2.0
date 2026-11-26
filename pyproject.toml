@@ -15,6 +15,6 @@ Repository = "https://github.com/edisonchan/comfyui-CleanFreak-Node-2.0"
 Issues = "https://github.com/edisonchan/comfyui-CleanFreak-Node-2.0/issues"
 
 [tool.comfy]
-PublisherId = "shootthesound"
-DisplayName = "CleanFreak"
+PublisherId = "edison"
+DisplayName = "CleanFreak (Nodes 2.0)"
 Icon = ""
