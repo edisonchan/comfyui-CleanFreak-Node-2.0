@@ -1,6 +1,10 @@
 <h1 align="center">CleanFreak — for ComfyUI</h1>
 
 <p align="center">
+  <em>Fork by <a href="https://github.com/edisonchan">edisonchan</a> — now works with both the classic canvas and ComfyUI Nodes 2.0. The classic layout is unchanged. <a href="#credits">Credits</a></em>
+</p>
+
+<p align="center">
   One-click <strong>tidy by role</strong> for any ComfyUI workflow.<br>
   Loaders go in one column. Encoders in the next. Then samplers, decoders, outputs. Width-aware. Coloured group cards. Connections preserved.<br>
   <em>Ships pre-classified for the entire stock node set plus the most-used community packs — Impact-Pack, controlnet_aux, rgthree-comfy, VideoHelperSuite, IPAdapter_plus, WAS Node Suite, comfyui-easy-use, KJNodes, RES4LYF, comfyui-dynamicprompts, comfyui-ollama, comfyui-automaticcfg, Comfyroll, LTXVideo / LTXTricks, and the entire shootthesound pack family. Edit anything you don't like and save it — the classifier learns over time.</em>
@@ -139,9 +143,18 @@ Storage: `<ComfyUI>/user/cleanfreak/role_overrides.json`. Live-editable on disk;
 
 ### Quick start
 
-1. Drop the `comfyui-CleanFreak` folder into `ComfyUI/custom_nodes/`.
-2. Restart ComfyUI (or reload the browser tab if hot-reloading is on).
-3. Right-click on empty canvas space → pick a tidy option.
+1. Install into `ComfyUI/custom_nodes/`, either by cloning:
+
+   ```bash
+   cd ComfyUI/custom_nodes
+   git clone https://github.com/edisonchan/comfyui-CleanFreak-Node-2.0.git
+   ```
+
+   or by downloading the ZIP from this repo and extracting it to `ComfyUI/custom_nodes/comfyui-CleanFreak-Node-2.0/`.
+
+2. Restart ComfyUI (or reload the browser tab if hot-reloading is on). If you had the original CleanFreak installed, remove it first so the two extensions don't both add menu items.
+
+3. Right-click on empty canvas space → pick a tidy option. Works on the classic canvas and on Nodes 2.0.
 
 No node to add to your workflow. No new inputs/outputs. It's purely an editor convenience.
 
@@ -160,9 +173,16 @@ No node to add to your workflow. No new inputs/outputs. It's purely an editor co
 
 ### Limitations / honest notes
 
-- **Custom nodes that don't match any rule** end up in `misc`. The classification table is exhaustive for stock and very common packs but can't be exhaustive for everything. Run the **preview classification** modal first if your workflow uses unusual nodes — anything in `misc` that should be elsewhere is something we can add to the override table.
-- **No grouping support yet.** ComfyUI groups (the coloured rectangles you can lasso) are ignored. Nodes inside groups are tidied along with everything else, breaking out of their group box. If grouping support matters to you, open an issue.
+- **Custom nodes that don't match any rule** end up in `misc`. The classification table is exhaustive for stock and very common packs but can't be exhaustive for everything. Run the **review & edit assignments** modal first if your workflow uses unusual nodes — anything in `misc` that should be elsewhere is something we can add to the override table.
 - **No animation.** Tidying happens in one frame. If you want to undo, ComfyUI's native undo (Ctrl+Z) covers it.
+
+---
+
+### Credits
+
+This fork is based on the original [CleanFreak by Peter Neill (shootthesound)](https://github.com/shootthesound/comfyui-CleanFreak), published under the MIT license. The classification rules, layout design, screenshots and the bulk of the code are his work. This fork only changes the frontend integration so the same layout also works under ComfyUI Nodes 2.0; classic-canvas behaviour and layout numbers are preserved. The original MIT notice is kept in [LICENSE](LICENSE).
+
+If you find this useful, please support the original author through the link below — the buy-me-a-coffee address belongs to him and was left unchanged in this fork.
 
 ---
 
